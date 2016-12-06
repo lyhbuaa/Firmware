@@ -58,20 +58,35 @@ public:
 		_integ5_state(0.0f),
 		_integ6_state(0.0f),
 		_integ7_state(0.0f),
+		_last_throttle_dem(0.0f),
 		_last_pitch_dem(0.0f),
 		_vel_dot(0.0f),
 		_EAS(0.0f),
+		_TASmax(30.0f),
+		_TASmin(3.0f),
 		_TAS_dem(0.0f),
 		_TAS_dem_last(0.0f),
+		_EAS_dem(0.0f),
+		_hgt_dem(0.0f),
 		_hgt_dem_in_old(0.0f),
+		_hgt_dem_adj(0.0f),
 		_hgt_dem_adj_last(0.0f),
+		_hgt_rate_dem(0.0f),
 		_hgt_dem_prev(0.0f),
 		_TAS_dem_adj(0.0f),
+		_TAS_rate_dem(0.0f),
 		_STEdotErrLast(0.0f),
 		_underspeed(false),
 		_detect_underspeed_enabled(true),
 		_badDescent(false),
 		_climbOutDem(false),
+		_pitch_dem_unc(0.0f),
+		_STEdot_max(0.0f),
+		_STEdot_min(0.0f),
+		_THRmaxf(0.0f),
+		_THRminf(0.0f),
+		_PITCHmaxf(0.5f),
+		_PITCHminf(-0.5f),
 		_SPE_dem(0.0f),
 		_SKE_dem(0.0f),
 		_SPEdot_dem(0.0f),
@@ -84,10 +99,14 @@ public:
 		_STEdot_error(0.0f),
 		_SEB_error(0.0f),
 		_SEBdot_error(0.0f),
+		_DT(0.02f),
 		_airspeed_enabled(false),
 		_states_initalized(false),
 		_in_air(false),
-		_throttle_slewrate(0.0f)
+		_throttle_slewrate(0.0f),
+		_indicated_airspeed_min(3.0f),
+		_indicated_airspeed_max(30.0f)
+
 	{
 	}
 
@@ -248,6 +267,20 @@ public:
 		_detect_underspeed_enabled = enabled;
 	}
 
+	// in case of a height reset driven by the estimator we need
+	// to allow TECS to swallow the step in height and demanded height instantaneously
+	void handle_alt_step(float delta_alt, float altitude) {
+		// add height reset delta to all variables involved
+		// in filtering the demanded height
+		_hgt_dem_in_old += delta_alt;
+		_hgt_dem_prev += delta_alt;
+		_hgt_dem_adj_last += delta_alt;
+
+		// reset height states
+		_integ3_state = altitude;
+		_integ1_state = _integ2_state = 0.0f;
+	}
+
 private:
 
 	struct tecs_state _tecs_state;
@@ -303,7 +336,7 @@ private:
 	// Integrator state 6 - throttle integrator
 	float _integ6_state;
 
-	// Integrator state 6 - pitch integrator
+	// Integrator state 7 - pitch integrator
 	float _integ7_state;
 
 	// throttle demand rate limiter state
@@ -437,7 +470,7 @@ private:
 	void _update_pitch(void);
 
 	// Initialise states and variables
-	void _initialise_states(float pitch, float throttle_cruise, float baro_altitude, float ptchMinCO_rad);
+	void _initialise_states(float pitch, float throttle_cruise, float baro_altitude, float ptchMinCO_rad, float EAS2TAS);
 
 	// Calculate specific total energy rate limits
 	void _update_STE_rate_lim(void);

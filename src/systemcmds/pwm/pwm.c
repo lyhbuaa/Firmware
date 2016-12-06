@@ -75,7 +75,7 @@ usage(const char *reason)
 
 	errx(1,
 	     "usage:\n"
-	     "pwm arm|disarm|rate|failsafe|disarmed|min|max|test|info  ...\n"
+	     "pwm arm|disarm|rate|failsafe|disarmed|min|max|test|steps|info  ...\n"
 	     "\n"
 	     "arm\t\t\t\tArm output\n"
 	     "disarm\t\t\t\tDisarm output\n"
@@ -101,12 +101,55 @@ usage(const char *reason)
 	     "\t[-a]\t\t\tConfigure all outputs\n"
 	     "\t-p <pwm value>\t\tPWM value\n"
 	     "\n"
+	     "steps ...\t\t\tRun 5 steps\n"
+	     "\t[-c <channels>]\t\t(e.g. 1234)\n"
+	     "\n"
 	     "info\t\t\t\tPrint information\n"
 	     "\n"
 	     "\t-v\t\t\tVerbose\n"
 	     "\t-d <dev>\t\t(default " PWM_OUTPUT0_DEVICE_PATH ")\n"
 	    );
 
+}
+
+static unsigned
+get_parameter_value(const char *option, const char *paramDescription)
+{
+	unsigned result_value = 0;
+
+	/* check if this is a param name */
+	if (strncmp("p:", option, 2) == 0) {
+
+		char paramName[32];
+		strncpy(paramName, option + 2, 16);
+		/* user wants to use a param name */
+		param_t parm = param_find(paramName);
+
+		if (parm != PARAM_INVALID) {
+			int32_t pwm_parm;
+			int gret = param_get(parm, &pwm_parm);
+
+			if (gret == 0) {
+				result_value = pwm_parm;
+
+			} else {
+				errx(gret, "PARAM '%s' LOAD FAIL", paramDescription);
+			}
+
+		} else {
+			errx(1, "PARAM '%s' NAME NOT FOUND", paramName);
+		}
+
+	} else {
+		char *ep;
+		result_value = strtoul(option, &ep, 0);
+
+		if (*ep != '\0') {
+			errx(1, "BAD '%s'", paramDescription);
+		}
+	}
+
+	return result_value;
 }
 
 int
@@ -187,48 +230,12 @@ pwm_main(int argc, char *argv[])
 
 			break;
 
-		case 'p': {
-				/* check if this is a param name */
-				if (strncmp("p:", optarg, 2) == 0) {
-
-					char buf[32];
-					strncpy(buf, optarg + 2, 16);
-					/* user wants to use a param name */
-					param_t parm = param_find(buf);
-
-					if (parm != PARAM_INVALID) {
-						int32_t pwm_parm;
-						int gret = param_get(parm, &pwm_parm);
-
-						if (gret == 0) {
-							pwm_value = pwm_parm;
-
-						} else {
-							usage("PARAM LOAD FAIL");
-						}
-
-					} else {
-						usage("PARAM NAME NOT FOUND");
-					}
-
-				} else {
-
-					pwm_value = strtoul(optarg, &ep, 0);
-				}
-
-				if (*ep != '\0') {
-					usage("BAD PWM VAL");
-				}
-			}
-
+		case 'p':
+			pwm_value = get_parameter_value(optarg, "PWM Value");
 			break;
 
 		case 'r':
-			alt_rate = strtoul(optarg, &ep, 0);
-
-			if (*ep != '\0') {
-				usage("BAD rate VAL");
-			}
+			alt_rate = get_parameter_value(optarg, "PWM Rate");
 
 			break;
 
@@ -350,11 +357,11 @@ pwm_main(int argc, char *argv[])
 	} else if (!strcmp(argv[1], "min")) {
 
 		if (set_mask == 0) {
-			usage("no channels set");
+			usage("min: no channels set");
 		}
 
 		if (pwm_value == 0) {
-			usage("no PWM value provided");
+			usage("min: no PWM value provided");
 		}
 
 		struct pwm_output_values pwm_values;
@@ -381,7 +388,7 @@ pwm_main(int argc, char *argv[])
 		}
 
 		if (pwm_values.channel_count == 0) {
-			usage("no PWM values added");
+			usage("min: no channels provided");
 
 		} else {
 
@@ -428,7 +435,7 @@ pwm_main(int argc, char *argv[])
 		}
 
 		if (pwm_values.channel_count == 0) {
-			usage("no PWM values added");
+			usage("max: no PWM channels");
 
 		} else {
 
@@ -475,7 +482,7 @@ pwm_main(int argc, char *argv[])
 		}
 
 		if (pwm_values.channel_count == 0) {
-			usage("no PWM values added");
+			usage("disarmed: no PWM channels");
 
 		} else {
 
@@ -495,7 +502,7 @@ pwm_main(int argc, char *argv[])
 		}
 
 		if (pwm_value == 0) {
-			usage("no PWM provided");
+			usage("failsafe: no PWM provided");
 		}
 
 		struct pwm_output_values pwm_values;
@@ -522,7 +529,7 @@ pwm_main(int argc, char *argv[])
 		}
 
 		if (pwm_values.channel_count == 0) {
-			usage("no PWM values added");
+			usage("failsafe: no PWM channels");
 
 		} else {
 
@@ -663,7 +670,7 @@ pwm_main(int argc, char *argv[])
 
 						} else if (phase == 1) {
 							/* ramp - depending how steep it is this ramp will look instantaneous on the output */
-							val = idle + (full - idle) * (phase_maxcount / (float)phase_counter);
+							val = idle + (full - idle) * ((float)phase_counter / phase_maxcount);
 
 						} else {
 							val = off;
@@ -885,4 +892,3 @@ pwm_main(int argc, char *argv[])
 	usage(NULL);
 	return 0;
 }
-

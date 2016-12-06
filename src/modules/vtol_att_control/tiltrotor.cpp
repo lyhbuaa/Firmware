@@ -67,7 +67,7 @@ Tiltrotor::Tiltrotor(VtolAttitudeControl *attc) :
 	_params_handles_tiltrotor.airspeed_blend_start = param_find("VT_ARSP_BLEND");
 	_params_handles_tiltrotor.elevons_mc_lock = param_find("VT_ELEV_MC_LOCK");
 	_params_handles_tiltrotor.front_trans_dur_p2 = param_find("VT_TRANS_P2_DUR");
-	_params_handles_tiltrotor.fw_motors_off = param_find("VT_FW_MOT_OFF");
+	_params_handles_tiltrotor.fw_motors_off = param_find("VT_FW_MOT_OFFID");
 }
 
 Tiltrotor::~Tiltrotor()
@@ -75,7 +75,7 @@ Tiltrotor::~Tiltrotor()
 
 }
 
-int
+void
 Tiltrotor::parameters_update()
 {
 	float v;
@@ -128,8 +128,6 @@ Tiltrotor::parameters_update()
 	if (_params_tiltrotor.airspeed_trans < _params_tiltrotor.airspeed_blend_start + 1.0f) {
 		_params_tiltrotor.airspeed_trans = _params_tiltrotor.airspeed_blend_start + 1.0f;
 	}
-
-	return OK;
 }
 
 int Tiltrotor::get_motor_off_channels(int channels)
@@ -145,7 +143,7 @@ int Tiltrotor::get_motor_off_channels(int channels)
 			break;
 		}
 
-		channel_bitmap |= 1 << channel;
+		channel_bitmap |= 1 << (channel - 1);
 		channels = channels / 10;
 	}
 
@@ -154,7 +152,6 @@ int Tiltrotor::get_motor_off_channels(int channels)
 
 void Tiltrotor::update_vtol_state()
 {
-	parameters_update();
 
 	/* simple logic using a two way switch to perform transitions.
 	 * after flipping the switch the vehicle will start tilting rotors, picking up
@@ -208,7 +205,7 @@ void Tiltrotor::update_vtol_state()
 
 			// check if we have reached airspeed to switch to fw mode
 			// also allow switch if we are not armed for the sake of bench testing
-			if (_airspeed->true_airspeed_m_s >= _params_tiltrotor.airspeed_trans || !_armed->armed) {
+			if (_airspeed->indicated_airspeed_m_s >= _params_tiltrotor.airspeed_trans || can_transition_on_ground()) {
 				_vtol_schedule.flight_mode = TRANSITION_FRONT_P2;
 				_vtol_schedule.transition_start = hrt_absolute_time();
 			}
@@ -244,16 +241,18 @@ void Tiltrotor::update_vtol_state()
 
 	case TRANSITION_FRONT_P1:
 	case TRANSITION_FRONT_P2:
+		_vtol_mode = TRANSITION_TO_FW;
+		break;
+
 	case TRANSITION_BACK:
-		_vtol_mode = TRANSITION;
+		_vtol_mode = TRANSITION_TO_MC;
 		break;
 	}
 }
 
 void Tiltrotor::update_mc_state()
 {
-	// copy virtual attitude setpoint to real attitude setpoint
-	memcpy(_v_att_sp, _mc_virtual_att_sp, sizeof(vehicle_attitude_setpoint_s));
+	VtolType::update_mc_state();
 
 	// make sure motors are not tilted
 	_tilt_control = _params_tiltrotor.tilt_mc;
@@ -268,16 +267,11 @@ void Tiltrotor::update_mc_state()
 		set_idle_mc();
 		flag_idle_mc = true;
 	}
-
-	_mc_roll_weight = 1.0f;
-	_mc_pitch_weight = 1.0f;
-	_mc_yaw_weight = 1.0f;
 }
 
 void Tiltrotor::update_fw_state()
 {
-	// copy virtual attitude setpoint to real attitude setpoint
-	memcpy(_v_att_sp, _fw_virtual_att_sp, sizeof(vehicle_attitude_setpoint_s));
+	VtolType::update_fw_state();
 
 	// make sure motors are tilted forward
 	_tilt_control = _params_tiltrotor.tilt_fw;
@@ -292,18 +286,12 @@ void Tiltrotor::update_fw_state()
 		set_idle_fw();
 		flag_idle_mc = false;
 	}
-
-	_mc_roll_weight = 0.0f;
-	_mc_pitch_weight = 0.0f;
-	_mc_yaw_weight = 0.0f;
 }
 
 void Tiltrotor::update_transition_state()
 {
 	if (!_flag_was_in_trans_mode) {
 		// save desired heading for transition and last thrust value
-		_yaw_transition = _v_att->yaw;
-		_throttle_transition = _actuators_mc_in->control[actuator_controls_s::INDEX_THROTTLE];
 		_flag_was_in_trans_mode = true;
 	}
 
@@ -321,7 +309,7 @@ void Tiltrotor::update_transition_state()
 		}
 
 		// do blending of mc and fw controls
-		if (_airspeed->true_airspeed_m_s >= _params_tiltrotor.airspeed_blend_start) {
+		if (_airspeed->indicated_airspeed_m_s >= _params_tiltrotor.airspeed_blend_start) {
 			_mc_roll_weight = 0.0f;
 
 		} else {
@@ -332,9 +320,11 @@ void Tiltrotor::update_transition_state()
 		// disable mc yaw control once the plane has picked up speed
 		_mc_yaw_weight = 1.0f;
 
-		if (_airspeed->true_airspeed_m_s > ARSP_YAW_CTRL_DISABLE) {
+		if (_airspeed->indicated_airspeed_m_s > ARSP_YAW_CTRL_DISABLE) {
 			_mc_yaw_weight = 0.0f;
 		}
+
+		_thrust_transition = _mc_virtual_att_sp->thrust;
 
 	} else if (_vtol_schedule.flight_mode == TRANSITION_FRONT_P2) {
 		// the plane is ready to go into fixed wing mode, tilt the rotors forward completely
@@ -342,6 +332,8 @@ void Tiltrotor::update_transition_state()
 				fabsf(_params_tiltrotor.tilt_fw - _params_tiltrotor.tilt_transition) * (float)hrt_elapsed_time(
 					&_vtol_schedule.transition_start) / (_params_tiltrotor.front_trans_dur_p2 * 1000000.0f);
 		_mc_roll_weight = 0.0f;
+
+		_thrust_transition = _mc_virtual_att_sp->thrust;
 
 	} else if (_vtol_schedule.flight_mode == TRANSITION_BACK) {
 		if (_rear_motors != IDLE) {
@@ -374,9 +366,10 @@ void Tiltrotor::update_transition_state()
 	memcpy(_v_att_sp, _mc_virtual_att_sp, sizeof(vehicle_attitude_setpoint_s));
 }
 
-void Tiltrotor::update_external_state()
+void Tiltrotor::waiting_on_tecs()
 {
-
+	// keep multicopter thrust until we get data from TECS
+	_v_att_sp->thrust = _thrust_transition;
 }
 
 /**
@@ -440,10 +433,12 @@ void Tiltrotor::set_rear_motor_state(rear_motor_state state)
 
 	int ret;
 	unsigned servo_count;
-	char *dev = PWM_OUTPUT0_DEVICE_PATH;
+	const char *dev = PWM_OUTPUT0_DEVICE_PATH;
 	int fd = px4_open(dev, 0);
 
-	if (fd < 0) {PX4_WARN("can't open %s", dev);}
+	if (fd < 0) {
+		PX4_WARN("can't open %s", dev);
+	}
 
 	ret = px4_ioctl(fd, PWM_SERVO_GET_COUNT, (unsigned long)&servo_count);
 	struct pwm_output_values pwm_max_values;

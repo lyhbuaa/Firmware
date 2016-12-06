@@ -52,30 +52,12 @@ public:
 	Tiltrotor(VtolAttitudeControl *_att_controller);
 	~Tiltrotor();
 
-	/**
-	 * Update vtol state.
-	 */
-	void update_vtol_state();
-
-	/**
-	 * Update multicopter state.
-	 */
-	void update_mc_state();
-
-	/**
-	 * Update fixed wing state.
-	 */
-	void update_fw_state();
-
-	/**
-	 * Update transition state.
-	 */
-	void update_transition_state();
-
-	/**
-	 * Update external state.
-	 */
-	void update_external_state();
+	virtual void update_vtol_state();
+	virtual void update_transition_state();
+	virtual void fill_actuator_outputs();
+	virtual void update_mc_state();
+	virtual void update_fw_state();
+	virtual void waiting_on_tecs();
 
 private:
 
@@ -144,11 +126,6 @@ private:
 	bool is_motor_off_channel(const int channel);
 
 	/**
-	 * Write control values to actuator output topics.
-	 */
-	void fill_actuator_outputs();
-
-	/**
 	 * Adjust the state of the rear motors. In fw mode they shouldn't spin.
 	 */
 	void set_rear_motor_state(rear_motor_state state);
@@ -156,7 +133,7 @@ private:
 	/**
 	 * Update parameters.
 	 */
-	int parameters_update();
+	virtual void parameters_update();
 
 };
 #endif
